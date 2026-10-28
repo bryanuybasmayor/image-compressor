@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DriveSqueeze — Compress &amp; upload images to Google Drive</title>
+  <meta name="description" content="Compress images in your browser and upload them straight to a Google Drive folder. 100% client-side." />
+
+  <!-- ======================================================================
+       CONFIGURATION LIVES IN app.js
+       Inside app.js you will find a CONFIG block at the very top where you
+       paste YOUR_CLIENT_ID and YOUR_API_KEY. Nothing else needs changing.
+       ====================================================================== -->
+
+  <!-- Google Identity Services (GIS).
+       Loaded async/defer so it never blocks first paint; app.js polls for
+       window.google before it is actually used. GitHub Pages serves the page
+       over HTTPS, which is required by GIS. -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- browser-image-compression (UMD build -> exposes window.imageCompression).
+       Pinned to an exact version so a future major release cannot break prod. -->
+  <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell">
+
+    <!-- ============================ HEADER ============================ -->
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" />
+          </svg>
+        </span>
+        <div>
+          <h1 class="brand__name">DriveSqueeze</h1>
+          <p class="brand__tag">Compress locally. Upload straight to Drive.</p>
+        </div>
+      </div>
+      <p class="privacy-note">No server involved — your images never touch anything but Google Drive.</p>
+    </header>
+
+    <!-- ======================= SIGNED-OUT VIEW ======================== -->
+    <!-- Shown on load when localStorage holds no valid (unexpired) token. -->
+    <section id="signin-view" class="card card--auth hidden" aria-labelledby="signin-title">
+      <h2 id="signin-title">Sign in to continue</h2>
+      <p class="muted">
+        DriveSqueeze needs permission to create files in your Drive. No token is
+        valid for more than an hour, and it is only ever stored in this browser.
+      </p>
+
+      <!-- The button is NOT a hand-rolled click handler on a div: GIS renders
+           its own button, but for the token model a plain button works too and
+           gives us full styling control. The click handler lives in app.js. -->
+      <button id="signin-btn" class="btn btn--google" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon">
+          <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8Z"/>
+          <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.9-3c-1 .7-2.4 1.2-4 1.2a7 7 0 0 1-6.6-4.8H1.4v3.1A12 12 0 0 0 12 24Z"/>
+          <path fill="#FBBC05" d="M5.4 14.5a7.2 7.2 0 0 1 0-4.6V6.8H1.4a12 12 0 0 0 0 10.8l4-3.1Z"/>
+          <path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.4 6.8l4 3.1A7 7 0 0 1 12 4.8Z"/>
+        </svg>
+        Sign in with Google
+      </button>
+
+      <p id="signin-error" class="alert alert--error hidden" role="alert"></p>
+    </section>
+
+    <!-- ======================== SIGNED-IN VIEW ======================== -->
+    <!-- Everything below is revealed by app.js once a valid token exists. -->
+    <section id="app-view" class="stack hidden">
+
+      <!-- ------------------------- ACCOUNT BAR ------------------------ -->
+      <div class="card account-bar">
+        <div class="account-bar__state">
+          <span class="dot dot--ok" aria-hidden="true"></span>
+          <strong>Signed in</strong>
+          <span class="muted" id="token-expiry">—</span>
+        </div>
+        <button id="signout-btn" class="btn btn--ghost btn--sm" type="button">Sign out</button>
+      </div>
+
+      <!-- ---------------------- DESTINATION FOLDER -------------------- -->
+      <div class="card">
+        <label class="field">
+          <span class="field__label">Destination Google Drive folder ID</span>
+          <!-- The folder ID is the trailing token of the folder URL:
+               drive.google.com/drive/folders/<THIS_PART> -->
+          <input
+            id="folder-id"
+            class="input"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuV — leave blank for My Drive root"
+          />
+        </label>
+        <p class="hint">
+          Leave this blank to upload to the root of <em>My Drive</em>.
+          The folder must already exist and be accessible to you.
+        </p>
+        <!-- Populated by app.js when the pasted value is not a plausible ID. -->
+        <p id="folder-warning" class="alert alert--warn hidden mt-12" role="status"></p>
+      </div>
+
+      <!-- -------------------------- DROP ZONE ------------------------- -->
+      <div class="card">
+        <div id="dropzone" class="dropzone" tabindex="0" role="button"
+             aria-label="Add images: click, press Enter, or drop files here">
+          <svg class="dropzone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+          </svg>
+          <p class="dropzone__title">Drop images here</p>
+          <p class="dropzone__sub muted">or click to browse — PNG, JPEG, WEBP, multiple files welcome</p>
+          <!-- Hidden native input, triggered by the drop-zone button below. -->
+          <input id="file-input" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/*" multiple />
+        </div>
+
+        <!-- Errors about the *selection* (e.g. a PDF was dropped) go here. -->
+        <p id="selection-warning" class="alert alert--warn hidden" role="status"></p>
+      </div>
+
+      <!-- ------------------------- FILE QUEUE ------------------------- -->
+      <div class="card" id="queue-card">
+        <div class="queue-head">
+          <h2>Queue <span id="queue-count" class="badge">0</span></h2>
+          <button id="clear-btn" class="btn btn--ghost btn--sm" type="button">Clear</button>
+        </div>
+        <p id="queue-empty" class="muted queue-empty">No images selected yet.</p>
+        <ul id="file-list" class="file-list"></ul>
+      </div>
+
+      <!-- --------------------------- ACTION --------------------------- -->
+      <div class="card card--action">
+        <div class="action-row">
+          <button id="run-btn" class="btn btn--primary" type="button" disabled>
+            Compress &amp; upload
+          </button>
+          <div class="action-status">
+            <p id="status-text" class="status-text" role="status" aria-live="polite">Idle.</p>
+            <div class="bar bar--global" id="global-bar-wrap" role="progressbar"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="bar__fill" id="global-bar"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span id="config-warning" class="alert alert--warn hidden" role="alert"></span>
+      <p class="muted small">
+        Access tokens are cached in <code>localStorage</code> for up to one hour.
+        Images are compressed in a web worker and uploaded with <code>fetch</code>.
+      </p>
+    </footer>
+  </main>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
